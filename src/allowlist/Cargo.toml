@@ -1,0 +1,26 @@
+# cspell:word mimalloc
+# cspell:word serde
+# cspell:word thiserror
+
+[dependencies]
+axum = {version = "0.7.5", features = ["macros"]}
+bb8 = {version = "0.8.5"}
+bb8-redis = "0.15.0"
+mimalloc = {version = "0.1.43", features = ["secure"]}
+redis = "0.25.4"
+serde = {version = "1.0.203", features = ["derive", "rc"]}
+strum = "0.26.3"
+strum_macros = "0.26.3"
+thiserror = "1.0.61"
+tokio = {version = "1.38.0", features = ["rt-multi-thread"]}
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+
+[dependencies.move-core-types]
+git = "https://github.com/aptos-labs/aptos-core"
+tag = "aptos-node-v1.15.2"
+
+[package]
+edition = "2021"
+name = "allowlist"
+version = "1.0.0"

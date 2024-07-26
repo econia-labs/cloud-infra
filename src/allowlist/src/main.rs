@@ -338,7 +338,7 @@ where
     }
 }
 
-async fn shutdown_signal() -> Result<(), String> {
+async fn shutdown_signal() -> impl std::future::Future<Output = Result<(), String>> {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -359,7 +359,7 @@ async fn shutdown_signal() -> Result<(), String> {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c => { Ok(()) },
-        _ = terminate => { Ok(()) },
+        res = ctrl_c => { res },
+        res = terminate => { res },
     }
 }

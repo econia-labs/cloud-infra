@@ -16,6 +16,7 @@ use bb8_redis::RedisConnectionManager;
 use move_core_types::account_address::{AccountAddress, AccountAddressParseError};
 use redis::{AsyncCommands, RedisError};
 use serde::Serialize;
+use tokio::signal;
 use tracing::info;
 
 /// The request path specifier for the request address.
@@ -72,6 +73,8 @@ enum PingPong {
 enum InitError {
     #[error("Could not bind listener: {0}")]
     BindListener(std::io::Error),
+    #[error("Failed to install Ctrl+C handler")]
+    CtrlCHandler(Error),
     #[error("Could not get a connection from the connection manager: {0}")]
     Connection(RunError<RedisError>),
     #[error("Could not start a Redis connection manager: {0}")]
@@ -206,6 +209,7 @@ async fn main() -> Result<(), String> {
         .map_err(|error| InitError::BindListener(error).to_string())?;
     info!("{}", InfoMessage::ServerListening(listener_url));
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal()?)
         .await
         .map_err(|error| InitError::ServeListener(error).to_string())?;
     Ok(())
@@ -329,5 +333,31 @@ where
             )
         })?;
         Ok(Self(connection, request_summary, parsed_address))
+    }
+}
+
+async fn shutdown_signal() -> Result<(), String> {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .map_err(|error| InitError::CtrlCHandler(error).to_string())?;
+        Ok::<(), String>(())
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .map_err(|_| "failed to install signal handler")?
+            .recv()
+            .await;
+        Ok::<(), String>(())
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => { Ok(()) },
+        _ = terminate => { Ok(()) },
     }
 }

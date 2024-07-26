@@ -73,8 +73,8 @@ enum PingPong {
 enum InitError {
     #[error("Could not bind listener: {0}")]
     BindListener(std::io::Error),
-    #[error("Failed to install Ctrl+C handler")]
-    CtrlCHandler(Error),
+    #[error("Failed to install Ctrl+C handler: {0}")]
+    CtrlCHandler(std::io::Error),
     #[error("Could not get a connection from the connection manager: {0}")]
     Connection(RunError<RedisError>),
     #[error("Could not start a Redis connection manager: {0}")]
@@ -87,6 +87,8 @@ enum InitError {
     Pool(RedisError),
     #[error("Could not serve listener: {0}")]
     ServeListener(std::io::Error),
+    #[error("Failed to install SIGTERM handler: {0}")]
+    SIGTERMHandler(std::io::Error),
 }
 
 #[derive(strum_macros::Display)]
@@ -209,7 +211,7 @@ async fn main() -> Result<(), String> {
         .map_err(|error| InitError::BindListener(error).to_string())?;
     info!("{}", InfoMessage::ServerListening(listener_url));
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal()?)
+        .with_graceful_shutdown(shutdown_signal().await?)
         .await
         .map_err(|error| InitError::ServeListener(error).to_string())?;
     Ok(())
@@ -347,7 +349,7 @@ async fn shutdown_signal() -> Result<(), String> {
     #[cfg(unix)]
     let terminate = async {
         signal::unix::signal(signal::unix::SignalKind::terminate())
-            .map_err(|_| "failed to install signal handler")?
+            .map_err(|error| InitError::SIGTERMHandler(error).to_string())?
             .recv()
             .await;
         Ok::<(), String>(())

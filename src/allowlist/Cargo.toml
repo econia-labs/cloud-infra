@@ -5,6 +5,7 @@
 axum = {version = "0.7.5", features = ["macros"]}
 bb8 = {version = "0.8.5"}
 bb8-redis = "0.15.0"
+futures = "0.3.30"
 redis = "0.25.4"
 serde = {version = "1.0.203", features = ["derive", "rc"]}
 strum = "0.26.3"

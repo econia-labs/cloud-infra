@@ -13,6 +13,7 @@ use axum::{
 };
 use bb8::{Pool, PooledConnection, RunError};
 use bb8_redis::RedisConnectionManager;
+use futures::future::FutureExt;
 use move_core_types::account_address::{AccountAddress, AccountAddressParseError};
 use redis::{AsyncCommands, RedisError};
 use serde::Serialize;
@@ -201,6 +202,14 @@ async fn main() -> Result<(), String> {
     }
     info!("{}", InfoMessage::RedisPingPongCheck);
 
+    // Await a successful shutdown signal, returning early if it errors out, then convert successful
+    // future output to unit type so it can be used as a graceful shutdown trigger.
+    let successful_shutdown_signal_future = async {
+        shutdown_signal().await?;
+        Ok::<(), String>(())
+    }
+    .map(|_| ());
+
     // Start the server.
     info!("{}", InfoMessage::StartingServer(listener_url.clone()));
     let app = Router::new()
@@ -211,7 +220,7 @@ async fn main() -> Result<(), String> {
         .map_err(|error| InitError::BindListener(error).to_string())?;
     info!("{}", InfoMessage::ServerListening(listener_url));
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal().await?)
+        .with_graceful_shutdown(successful_shutdown_signal_future)
         .await
         .map_err(|error| InitError::ServeListener(error).to_string())?;
     Ok(())
@@ -338,7 +347,7 @@ where
     }
 }
 
-async fn shutdown_signal() -> impl std::future::Future<Output = Result<(), String>> {
+async fn shutdown_signal() -> Result<(), String> {
     let ctrl_c = async {
         signal::ctrl_c()
             .await

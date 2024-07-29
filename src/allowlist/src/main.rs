@@ -348,15 +348,11 @@ where
 }
 
 async fn shutdown_signal() -> Result<(), String> {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .map_err(|error| InitError::CtrlCHandler(error).to_string())?;
-        Ok(())
-    };
+    #[cfg(not(unix))]
+    let terminate_signal = std::future::pending();
 
     #[cfg(unix)]
-    let terminate = async {
+    let terminate_signal = async {
         signal::unix::signal(signal::unix::SignalKind::terminate())
             .map_err(|error| InitError::SIGTERMHandler(error).to_string())?
             .recv()
@@ -364,11 +360,11 @@ async fn shutdown_signal() -> Result<(), String> {
         Ok(())
     };
 
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
     tokio::select! {
-        result = ctrl_c => { result },
-        result = terminate => { result },
+        result = signal::ctrl_c() => {
+            result.map_err(|error| InitError::CtrlCHandler(error).to_string())?;
+            Ok(())
+        },
+        result = terminate_signal => { result }
     }
 }

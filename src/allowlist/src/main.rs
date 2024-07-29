@@ -352,7 +352,7 @@ async fn shutdown_signal() -> Result<(), String> {
         signal::ctrl_c()
             .await
             .map_err(|error| InitError::CtrlCHandler(error).to_string())?;
-        Ok::<(), String>(())
+        Ok(())
     };
 
     #[cfg(unix)]
@@ -361,7 +361,7 @@ async fn shutdown_signal() -> Result<(), String> {
             .map_err(|error| InitError::SIGTERMHandler(error).to_string())?
             .recv()
             .await;
-        Ok::<(), String>(())
+        Ok(())
     };
 
     #[cfg(not(unix))]

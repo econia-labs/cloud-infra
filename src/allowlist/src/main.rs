@@ -347,10 +347,8 @@ where
     }
 }
 
+// Asynchronous shutdown signal allowing CTRL+C or SIGTERM as a trigger.
 async fn shutdown_signal() -> Result<(), String> {
-    #[cfg(not(unix))]
-    let terminate_signal = std::future::pending();
-
     #[cfg(unix)]
     let terminate_signal = async {
         signal::unix::signal(signal::unix::SignalKind::terminate())
@@ -359,6 +357,9 @@ async fn shutdown_signal() -> Result<(), String> {
             .await;
         Ok(())
     };
+
+    #[cfg(not(unix))]
+    let terminate_signal = std::future::pending();
 
     tokio::select! {
         result = signal::ctrl_c() => {

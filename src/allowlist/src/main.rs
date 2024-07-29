@@ -202,14 +202,6 @@ async fn main() -> Result<(), String> {
     }
     info!("{}", InfoMessage::RedisPingPongCheck);
 
-    // Await a successful shutdown signal, returning early if it errors out, then convert successful
-    // future output to unit type so it can be used as a graceful shutdown trigger.
-    let successful_shutdown_signal_future = async {
-        shutdown_signal().await?;
-        Ok::<(), String>(())
-    }
-    .map(|_| ());
-
     // Start the server.
     info!("{}", InfoMessage::StartingServer(listener_url.clone()));
     let app = Router::new()
@@ -220,7 +212,15 @@ async fn main() -> Result<(), String> {
         .map_err(|error| InitError::BindListener(error).to_string())?;
     info!("{}", InfoMessage::ServerListening(listener_url));
     axum::serve(listener, app)
-        .with_graceful_shutdown(successful_shutdown_signal_future)
+        .with_graceful_shutdown(
+            // Await shutdown signal, returning early if it errors out, then map the output of a
+            // successful future to be of unit type for use as a graceful shutdown signal.
+            async {
+                shutdown_signal().await?;
+                Ok(())
+            }
+            .map(|_: Result<(), String>| ()),
+        )
         .await
         .map_err(|error| InitError::ServeListener(error).to_string())?;
     Ok(())
@@ -368,7 +368,7 @@ async fn shutdown_signal() -> Result<(), String> {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        res = ctrl_c => { res },
-        res = terminate => { res },
+        result = ctrl_c => { result },
+        result = terminate => { result },
     }
 }

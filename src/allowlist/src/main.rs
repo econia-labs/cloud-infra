@@ -17,8 +17,14 @@ use futures::future::FutureExt;
 use move_core_types::account_address::{AccountAddress, AccountAddressParseError};
 use redis::{AsyncCommands, RedisError};
 use serde::Serialize;
+use std::time::Duration;
 use tokio::signal;
+use tower_http::timeout::TimeoutLayer;
+use tower_http::trace::TraceLayer;
 use tracing::info;
+
+/// The timeout period for pending requests.
+const PENDING_REQUEST_TIMEOUT: u64 = 10;
 
 /// The request path specifier for the request address.
 const REQUEST_PATH: &str = "/:request_address";
@@ -206,6 +212,10 @@ async fn main() -> Result<(), String> {
     info!("{}", InfoMessage::StartingServer(listener_url.clone()));
     let app = Router::new()
         .route(REQUEST_PATH, get(is_allowed).post(add_to_allowlist))
+        .layer((
+            TraceLayer::new_for_http(),
+            TimeoutLayer::new(Duration::from_secs(PENDING_REQUEST_TIMEOUT)),
+        ))
         .with_state(pool);
     let listener = tokio::net::TcpListener::bind(listener_url.clone())
         .await

@@ -1,0 +1,36 @@
+# Build and push diesel-runner Docker image to Docker Hub whenever a tag of the
+# pattern diesel-runner-v* is pushed.
+---
+jobs:
+  build-push:
+    runs-on: 'ubuntu-latest'
+    steps:
+    - uses: 'actions/checkout@v4'
+    - id: 'metadata'
+      uses: 'docker/metadata-action@v5'
+      with:
+        images: 'econialabs/diesel-runner'
+        tags: |
+          type=match,pattern=diesel-runner-v(.*),group=1
+    - uses: 'docker/setup-qemu-action@v3'
+    - uses: 'docker/setup-buildx-action@v3'
+    - uses: 'docker/login-action@v3'
+      with:
+        password: '${{ secrets.DOCKERHUB_TOKEN }}'
+        username: '${{ secrets.DOCKERHUB_USERNAME }}'
+    - uses: 'docker/build-push-action@v6'
+      with:
+        cache-from: 'type=gha'
+        cache-to: 'type=gha,mode=max'
+        context: 'src'
+        file: 'src/diesel-runner/Dockerfile'
+        labels: '${{ steps.metadata.outputs.labels }}'
+        platforms: '${{ vars.DOCKER_IMAGE_PLATFORMS }}'
+        push: 'true'
+        tags: '${{ steps.metadata.outputs.tags }}'
+name: 'Build diesel-runner Docker image and push to Docker Hub'
+'on':
+  push:
+    tags:
+    - 'diesel-runner-v*'
+...

@@ -1,0 +1,5 @@
+---
+parameters:
+  ImageVersion: '0.5.0'
+template-file-path: 'src/allowlist/cloud-formation/allowlist.cfn.yaml'
+...

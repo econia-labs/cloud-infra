@@ -1,6 +1,6 @@
 # Chainguard image digest (SHA-256), Rust builder version.
 ARG DIGEST=5567380ef73d947c834960aa127784eef821c69596366dd48caf77736e854bc2
-ARG BUILDER_VERSION=0.1.0
+ARG BUILDER_VERSION=1.0.0
 
 FROM econialabs/rust-builder:$BUILDER_VERSION AS base
 WORKDIR /app

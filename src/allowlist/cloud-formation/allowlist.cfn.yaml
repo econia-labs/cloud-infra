@@ -1,0 +1,361 @@
+---
+Mappings:
+  Subnets:
+    A:
+      AvailabilityZone: 0
+      CidrBlock: '10.0.1.0/24'
+    B:
+      AvailabilityZone: 1
+      CidrBlock: '10.0.2.0/24'
+Outputs:
+  ApiEndpoint:
+    Description: 'Public API endpoint URL'
+    Value: !Join
+    - ''
+    - - 'https://'
+      - !Ref 'RestApi'
+      - '.execute-api.'
+      - !Ref 'AWS::Region'
+      - '.amazonaws.com/'
+      - !Ref 'AWS::StackName'
+Parameters:
+  # Query address 0x0 as a proxy for a health check.
+  ContainerHealthCheckPath:
+    Default: '/0'
+    Type: 'String'
+  ContainerName:
+    Default: 'allowlist-server-container'
+    Type: 'String'
+  # Using a port like 80 requires heightened permissions, so use a high port.
+  ContainerPort:
+    Default: 3000
+    Type: 'Number'
+  ImageVersion:
+    Type: 'String'
+  NlbListenerPort:
+    Default: 80
+    Type: 'Number'
+  VpcCidrBlock:
+    Default: '10.0.0.0/16'
+    Type: 'String'
+Resources:
+  # Cluster for running ECS containers.
+  ContainerCluster:
+    Type: 'AWS::ECS::Cluster'
+  # ECS task definition for the allowlist server.
+  ContainerDefinition:
+    Properties:
+      ContainerDefinitions:
+      - Environment:
+        - Name: 'REDIS_URL'
+          Value: !Sub 'redis://${RedisCluster.ClusterEndpoint.Address}'
+        - Name: 'SERVER_URL'
+          Value: !Sub '0.0.0.0:${ContainerPort}'
+        Image: !Sub 'econialabs/allowlist:${ImageVersion}'
+        LogConfiguration:
+          LogDriver: 'awslogs'
+          Options:
+            awslogs-group: !Sub '/ecs/${AWS::StackName}'
+            awslogs-region: !Ref 'AWS::Region'
+            awslogs-stream-prefix: 'ecs'
+        Name: !Ref 'ContainerName'
+        PortMappings:
+        - ContainerPort: !Ref 'ContainerPort'
+      Cpu: '256'
+      ExecutionRoleArn: !GetAtt 'ContainerRole.Arn'
+      Family: 'AllowlistTask'
+      Memory: '512'
+      NetworkMode: 'awsvpc'
+      RequiresCompatibilities:
+      - 'FARGATE'
+    Type: 'AWS::ECS::TaskDefinition'
+  # Log group for ECS task logging.
+  ContainerLogGroup:
+    Properties:
+      LogGroupName: !Sub '/ecs/${AWS::StackName}'
+      RetentionInDays: 14
+    Type: 'AWS::Logs::LogGroup'
+  # Role with assorted permissions required to run the server container.
+  ContainerRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: 'sts:AssumeRole'
+          Effect: 'Allow'
+          Principal:
+            Service: 'ecs-tasks.amazonaws.com'
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - 'ecr:GetDownloadUrlForLayer'
+            - 'ecr:BatchGetImage'
+            - 'ecr:BatchCheckLayerAvailability'
+            - 'logs:CreateLogStream'
+            - 'logs:PutLogEvents'
+            Effect: 'Allow'
+            Resource: '*'
+        PolicyName: !Sub 'ContainerRolePolicy-${AWS::StackName}'
+    Type: 'AWS::IAM::Role'
+  # ECS service for running the allowlist server container.
+  ContainerRunner:
+    Properties:
+      Cluster: !Ref 'ContainerCluster'
+      LaunchType: 'FARGATE'
+      LoadBalancers:
+      - ContainerName: !Ref 'ContainerName'
+        ContainerPort: !Ref 'ContainerPort'
+        TargetGroupArn: !Ref 'ContainerTargetGroup'
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: 'ENABLED'
+          SecurityGroups:
+          - !Ref 'ContainerSecurityGroup'
+          Subnets:
+          - !Ref 'SubnetA'
+          - !Ref 'SubnetB'
+      TaskDefinition: !Ref 'ContainerDefinition'
+    Type: 'AWS::ECS::Service'
+  # Security group for ECS containers.
+  ContainerSecurityGroup:
+    Properties:
+      GroupDescription: 'ECS container security group'
+      # Allow all outbound traffic, to Redis and to Docker Hub.
+      SecurityGroupEgress:
+      - CidrIp: '0.0.0.0/0'
+        IpProtocol: -1
+      VpcId: !Ref 'VPC'
+    Type: 'AWS::EC2::SecurityGroup'
+  # Separated from container security group to eliminate cyclical dependencies.
+  ContainerSecurityGroupIngress:
+    Properties:
+      FromPort: !Ref 'ContainerPort'
+      GroupId: !Ref 'ContainerSecurityGroup'
+      IpProtocol: 'tcp'
+      SourceSecurityGroupId: !Ref 'NlbSecurityGroup'
+      ToPort: !Ref 'ContainerPort'
+    Type: 'AWS::EC2::SecurityGroupIngress'
+  # Target group from network load balancer to ECS containers.
+  ContainerTargetGroup:
+    Properties:
+      HealthCheckPath: !Ref 'ContainerHealthCheckPath'
+      HealthCheckProtocol: 'HTTP'
+      Port: !Ref 'ContainerPort'
+      Protocol: 'TCP'
+      TargetType: 'ip'
+      VpcId: !Ref 'VPC'
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+  # A subnet for the first two availability zones in the VPC region.
+  Fn::ForEach::Subnet:
+  - 'Identifier'
+  - - 'A'
+    - 'B'
+  - Subnet${Identifier}:
+      Properties:
+        AvailabilityZone: !Select
+        - !FindInMap
+          - 'Subnets'
+          - Ref: 'Identifier'
+          - 'AvailabilityZone'
+        - Fn::GetAZs: !Ref 'AWS::Region'
+        CidrBlock: !FindInMap
+        - 'Subnets'
+        - Ref: 'Identifier'
+        - 'CidrBlock'
+        MapPublicIpOnLaunch: true
+        VpcId: !Ref 'VPC'
+      Type: 'AWS::EC2::Subnet'
+  # An outbound internet traffic route association for each subnet.
+  Fn::ForEach::SubnetOutboundGatewayRouteAssociation:
+  - 'Identifier'
+  - - 'A'
+    - 'B'
+  - SubnetOutboundGatewayRouteAssociation${Identifier}:
+      Properties:
+        RouteTableId: !Ref 'RouteTable'
+        SubnetId: !Ref
+          Fn::Sub:
+          - 'Subnet${Identifier}'
+          - Identifier: !Ref 'Identifier'
+      Type: 'AWS::EC2::SubnetRouteTableAssociation'
+  # Internet gateway attachment for the VPC.
+  GatewayAttachment:
+    Properties:
+      InternetGatewayId: !Ref 'InternetGateway'
+      VpcId: !Ref 'VPC'
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+  # Route for outbound internet traffic through the internet gateway.
+  GatewayOutboundRoute:
+    DependsOn: 'GatewayAttachment'
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref 'InternetGateway'
+      RouteTableId: !Ref 'RouteTable'
+    Type: 'AWS::EC2::Route'
+  # Internet gateway for the VPC.
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+  # Network load balancer, connected directly to container runner.
+  Nlb:
+    Properties:
+      Scheme: 'internal'
+      SecurityGroups:
+      - !Ref 'NlbSecurityGroup'
+      Subnets:
+      - !Ref 'SubnetA'
+      - !Ref 'SubnetB'
+      Type: 'network'
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+  # Network load balancer listener.
+  NlbListener:
+    Properties:
+      DefaultActions:
+      - TargetGroupArn: !Ref 'ContainerTargetGroup'
+        Type: 'forward'
+      LoadBalancerArn: !Ref 'Nlb'
+      Port: !Ref 'NlbListenerPort'
+      Protocol: 'TCP'
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+  # Security group for network load balancer.
+  NlbSecurityGroup:
+    Properties:
+      GroupDescription: 'Security group for NLB'
+      SecurityGroupEgress:
+      - DestinationSecurityGroupId: !Ref 'ContainerSecurityGroup'
+        FromPort: !Ref 'ContainerPort'
+        IpProtocol: 'tcp'
+        ToPort: !Ref 'ContainerPort'
+      # Allow all inbound traffic on load balancer listener port.
+      SecurityGroupIngress:
+      - CidrIp: '0.0.0.0/0'
+        FromPort: !Ref 'NlbListenerPort'
+        IpProtocol: 'tcp'
+        ToPort: !Ref 'NlbListenerPort'
+      VpcId: !Ref 'VPC'
+    Type: 'AWS::EC2::SecurityGroup'
+  # Redis database cluster.
+  RedisCluster:
+    Properties:
+      # Base ACL provided by AWS granting open access to the cluster (for any
+      # traffic permitted by the ingress security group).
+      ACLName: 'open-access'
+      ClusterName: !Ref 'AWS::StackName'
+      NodeType: 'db.t4g.small'
+      # A single shard with one replica, straddling the first two availability
+      # zones in the subnet group.
+      NumReplicasPerShard: 1
+      NumShards: 1
+      SecurityGroupIds:
+      - !Ref 'RedisIngressSecurityGroup'
+      SubnetGroupName: !Ref 'SubnetGroup'
+      TLSEnabled: false
+    Type: 'AWS::MemoryDB::Cluster'
+  # Ingress security group for Redis, allowing access from ECS tasks only.
+  RedisIngressSecurityGroup:
+    Properties:
+      GroupDescription: 'VPC ingress access to Redis cluster'
+      SecurityGroupIngress:
+      # Allow inbound TCP traffic on any port, since containers use ephemeral
+      # ports for communication.
+      - FromPort: 0
+        IpProtocol: 'tcp'
+        SourceSecurityGroupId: !Ref 'ContainerSecurityGroup'
+        ToPort: 65535
+      VpcId: !Ref 'VPC'
+    Type: 'AWS::EC2::SecurityGroup'
+  # Public REST API.
+  RestApi:
+    Properties:
+      EndpointConfiguration:
+        Types:
+        - 'EDGE'
+      Name: !Ref 'AWS::StackName'
+    Type: 'AWS::ApiGateway::RestApi'
+  # Deployment of Rest API gateway.
+  RestApiDeployment:
+    DependsOn:
+    - 'RestApiGet'
+    - 'RestApiPost'
+    # Use a nonce to force a new deployment when the API configuration changes.
+    Metadata:
+      Nonce: 5
+    Properties:
+      RestApiId: !Ref 'RestApi'
+      StageName: !Ref 'AWS::StackName'
+    Type: 'AWS::ApiGateway::Deployment'
+  # GET method for the REST API.
+  RestApiGet:
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: 'NONE'
+      HttpMethod: 'GET'
+      Integration:
+        ConnectionId: !Ref 'VpcLink'
+        ConnectionType: 'VPC_LINK'
+        IntegrationHttpMethod: 'GET'
+        RequestParameters:
+          integration.request.path.requested_address:
+            'method.request.path.requested_address'
+        Type: 'HTTP_PROXY'
+        Uri: !Sub 'http://${Nlb.DNSName}/{requested_address}'
+      RequestParameters:
+        method.request.path.requested_address: true
+      ResourceId: !Ref 'RestApiRequestedAddress'
+      RestApiId: !Ref 'RestApi'
+    Type: 'AWS::ApiGateway::Method'
+  # POST method for the REST API.
+  RestApiPost:
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: 'AWS_IAM'
+      HttpMethod: 'POST'
+      Integration:
+        ConnectionId: !Ref 'VpcLink'
+        ConnectionType: 'VPC_LINK'
+        IntegrationHttpMethod: 'POST'
+        RequestParameters:
+          integration.request.path.requested_address:
+            'method.request.path.requested_address'
+        Type: 'HTTP_PROXY'
+        Uri: !Sub 'http://${Nlb.DNSName}/{requested_address}'
+      RequestParameters:
+        method.request.path.requested_address: true
+      ResourceId: !Ref 'RestApiRequestedAddress'
+      RestApiId: !Ref 'RestApi'
+    Type: 'AWS::ApiGateway::Method'
+  # Path capture for the requested address in the REST API.
+  RestApiRequestedAddress:
+    Properties:
+      ParentId: !GetAtt 'RestApi.RootResourceId'
+      PathPart: '{requested_address}'
+      RestApiId: !Ref 'RestApi'
+    Type: 'AWS::ApiGateway::Resource'
+  # Route table for the VPC.
+  RouteTable:
+    Properties:
+      VpcId: !Ref 'VPC'
+    Type: 'AWS::EC2::RouteTable'
+  # A group containing all VPC subnets to be accessible for Redis.
+  SubnetGroup:
+    Properties:
+      SubnetGroupName: !Ref 'AWS::StackName'
+      SubnetIds:
+      - !Ref 'SubnetA'
+      - !Ref 'SubnetB'
+    Type: 'AWS::MemoryDB::SubnetGroup'
+  # Virtual private cloud for internal networking.
+  VPC:
+    Properties:
+      CidrBlock: !Ref 'VpcCidrBlock'
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+    Type: 'AWS::EC2::VPC'
+  # Connection to network load balancer.
+  VpcLink:
+    Properties:
+      Name: !Ref 'AWS::StackName'
+      TargetArns:
+      - !Ref 'Nlb'
+    Type: 'AWS::ApiGateway::VpcLink'
+Transform: 'AWS::LanguageExtensions'
+...

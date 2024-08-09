@@ -5,12 +5,14 @@
 axum = {version = "0.7.5", features = ["macros"]}
 bb8 = {version = "0.8.5"}
 bb8-redis = "0.15.0"
+futures = "0.3.30"
 redis = "0.25.4"
 serde = {version = "1.0.203", features = ["derive", "rc"]}
 strum = "0.26.3"
 strum_macros = "0.26.3"
 thiserror = "1.0.61"
-tokio = {version = "1.38.0", features = ["rt-multi-thread"]}
+tokio = {version = "1.38.0", features = ["rt-multi-thread", "signal"]}
+tower-http = {version = "0.5.2", features = ["timeout", "trace"]}
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 

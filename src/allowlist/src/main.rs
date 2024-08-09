@@ -13,10 +13,18 @@ use axum::{
 };
 use bb8::{Pool, PooledConnection, RunError};
 use bb8_redis::RedisConnectionManager;
+use futures::future::FutureExt;
 use move_core_types::account_address::{AccountAddress, AccountAddressParseError};
 use redis::{AsyncCommands, RedisError};
 use serde::Serialize;
+use std::time::Duration;
+use tokio::signal;
+use tower_http::timeout::TimeoutLayer;
+use tower_http::trace::TraceLayer;
 use tracing::info;
+
+/// The timeout period for pending requests.
+const PENDING_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The request path specifier for the request address.
 const REQUEST_PATH: &str = "/:request_address";
@@ -76,6 +84,8 @@ enum InitError {
     Connection(RunError<RedisError>),
     #[error("Could not start a Redis connection manager: {0}")]
     ConnectionManager(RedisError),
+    #[error("Failed to install Ctrl+C handler: {0}")]
+    CtrlCHandler(std::io::Error),
     #[error("Redis connection init ping unsuccessful: {0}")]
     Ping(RunError<RedisError>),
     #[error("Redis connection init ping did not pong correctly: {0}")]
@@ -84,6 +94,8 @@ enum InitError {
     Pool(RedisError),
     #[error("Could not serve listener: {0}")]
     ServeListener(std::io::Error),
+    #[error("Failed to install SIGTERM handler: {0}")]
+    SigtermHandler(std::io::Error),
 }
 
 #[derive(strum_macros::Display)]
@@ -200,12 +212,25 @@ async fn main() -> Result<(), String> {
     info!("{}", InfoMessage::StartingServer(listener_url.clone()));
     let app = Router::new()
         .route(REQUEST_PATH, get(is_allowed).post(add_to_allowlist))
+        .layer((
+            TraceLayer::new_for_http(),
+            TimeoutLayer::new(PENDING_REQUEST_TIMEOUT),
+        ))
         .with_state(pool);
     let listener = tokio::net::TcpListener::bind(listener_url.clone())
         .await
         .map_err(|error| InitError::BindListener(error).to_string())?;
     info!("{}", InfoMessage::ServerListening(listener_url));
     axum::serve(listener, app)
+        .with_graceful_shutdown(
+            // Await shutdown signal, returning early if it errors out, then map the output of a
+            // successful future to be of unit type for use as a graceful shutdown signal.
+            async {
+                shutdown_signal().await?;
+                Ok(())
+            }
+            .map(|_: Result<(), String>| ()),
+        )
         .await
         .map_err(|error| InitError::ServeListener(error).to_string())?;
     Ok(())
@@ -276,7 +301,7 @@ fn map_error(
     )
 }
 
-/// Custom extractor to parse an address and a get a connection to the Redis database.
+/// Custom extractor to parse an address and get a connection to the Redis database.
 #[async_trait]
 impl<S> FromRequestParts<S> for PreparedConnection
 where
@@ -329,5 +354,28 @@ where
             )
         })?;
         Ok(Self(connection, request_summary, parsed_address))
+    }
+}
+
+// Asynchronous shutdown signal allowing CTRL+C or SIGTERM as a trigger.
+async fn shutdown_signal() -> Result<(), String> {
+    #[cfg(unix)]
+    let terminate_signal = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .map_err(|error| InitError::SigtermHandler(error).to_string())?
+            .recv()
+            .await;
+        Ok(())
+    };
+
+    #[cfg(not(unix))]
+    let terminate_signal = std::future::pending();
+
+    tokio::select! {
+        result = signal::ctrl_c() => {
+            result.map_err(|error| InitError::CtrlCHandler(error).to_string())?;
+            Ok(())
+        },
+        result = terminate_signal => { result }
     }
 }

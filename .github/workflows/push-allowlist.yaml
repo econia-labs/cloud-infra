@@ -22,7 +22,7 @@ jobs:
       with:
         build-args: |
           BIN=allowlist
-          BUILDER_VERSION=0.1.0
+          BUILDER_VERSION=1.0.0
           PACKAGE=allowlist
         cache-from: 'type=gha'
         cache-to: 'type=gha,mode=max'

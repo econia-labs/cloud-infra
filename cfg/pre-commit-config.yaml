@@ -8,6 +8,24 @@ repos:
 -
   hooks:
   -
+    # Lint all AWS CloudFormation files ending in `.cfn.yaml`.
+    files: '.*\.cfn\.yaml'
+    id: 'cfn-lint'
+  repo: 'https://github.com/aws-cloudformation/cfn-lint'
+  rev: 'v1.8.2'
+-
+  hooks:
+  -
+    args:
+    - '--config-file'
+    - 'cfg/yamllint-config.yaml'
+    - '--strict'
+    id: 'yamllint'
+  repo: 'https://github.com/adrienverge/yamllint'
+  rev: 'v1.34.0'
+-
+  hooks:
+  -
     entry: './src/sh/ensure-shebang.sh'
     id: 'ensure-shebang'
     language: 'script'

@@ -1,0 +1,22 @@
+query RecentCompletions {
+  issues(
+    filter: {
+      state: {
+        type: { eq: "completed" }
+      }
+      completedAt: {
+        gte: "-P1D"
+      }
+    }
+  ) {
+    nodes {
+      title
+      identifier
+      assignee {
+        email
+      }
+      completedAt
+      startedAt
+    }
+  }
+}

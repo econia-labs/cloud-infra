@@ -1,0 +1,16 @@
+query IntrospectionQuery {
+  __schema {
+    types {
+      name
+      description
+      fields {
+        name
+        description
+        type {
+          name
+          kind
+        }
+      }
+    }
+  }
+}

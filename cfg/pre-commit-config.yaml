@@ -125,4 +125,25 @@ repos:
     id: 'clippy'
   repo: 'https://github.com/doublify/pre-commit-rust'
   rev: 'v1.0'
+-
+  hooks:
+  -
+    id: 'black'
+  repo: 'https://github.com/psf/black'
+  rev: '24.10.0'
+-
+  hooks:
+  -
+    args:
+    # Allow line length from Black, which is not technically PEP8 compliant.
+    - '--max-line-length'
+    - '88'
+    id: 'flake8'
+  repo: 'https://github.com/pycqa/flake8'
+  rev: '7.1.1'
+-
+  hooks:
+  - id: 'reorder-python-imports'
+  repo: 'https://github.com/asottile/reorder-python-imports'
+  rev: 'v3.14.0'
 ...
